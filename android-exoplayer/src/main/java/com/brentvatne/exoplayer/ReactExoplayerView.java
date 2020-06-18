@@ -411,7 +411,6 @@ class ReactExoplayerView extends FrameLayout implements
                 }
                 if (playerNeedsSource && srcUri != null) {
                     exoPlayerView.invalidateAspectRatio();
-
                     ArrayList<MediaSource> mediaSourceList = buildTextSources();
                     MediaSource videoSource = buildMediaSource(srcUri, extension);
                     MediaSource mediaSource;
@@ -529,6 +528,10 @@ class ReactExoplayerView extends FrameLayout implements
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN);
         return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+    }
+
+    private void abandonAudioFocus() {
+        audioManager.abandonAudioFocus(this);
     }
 
     private void setPlayWhenReady(boolean playWhenReady) {
@@ -988,6 +991,7 @@ class ReactExoplayerView extends FrameLayout implements
 
     private void reloadSource() {
         playerNeedsSource = true;
+        abandonAudioFocus();
         initializePlayer();
     }
 

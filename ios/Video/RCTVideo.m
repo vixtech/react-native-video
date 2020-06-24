@@ -124,6 +124,10 @@ static int const RCTVideoUnset = -1;
                                              selector:@selector(applicationWillResignActive:)
                                                  name:UIApplicationWillResignActiveNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationDidBecomeActive:)
+                                                 name:UIApplicationDidBecomeActiveNotification
+                                               object:nil];
     
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(applicationDidEnterBackground:)
@@ -223,6 +227,13 @@ static int const RCTVideoUnset = -1;
   
   [_player pause];
   [_player setRate:0.0];
+}
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+  if(self.onApplicationDidBecomeActive) {
+    self.onApplicationDidBecomeActive(@{@"playbackRate": [NSNumber numberWithFloat:_player.rate]});
+  }
 }
 
 - (void)applicationDidEnterBackground:(NSNotification *)notification

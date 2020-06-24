@@ -196,6 +196,12 @@ export default class Video extends Component {
     }
   };
 
+  _onApplicationDidBecomeActive = (event) => {
+    if (this.props.onApplicationDidBecomeActive) {
+      this.props.onApplicationDidBecomeActive(event.nativeEvent);
+    }
+  };
+
   _onExternalPlaybackChange = (event) => {
     if (this.props.onExternalPlaybackChange) {
       this.props.onExternalPlaybackChange(event.nativeEvent);
@@ -302,6 +308,7 @@ export default class Video extends Component {
       onPlaybackStalled: this._onPlaybackStalled,
       onPlaybackResume: this._onPlaybackResume,
       onPlaybackRateChange: this._onPlaybackRateChange,
+      onApplicationDidBecomeActive: this._onApplicationDidBecomeActive,
       onAudioFocusChanged: this._onAudioFocusChanged,
       onAudioBecomingNoisy: this._onAudioBecomingNoisy,
       onPictureInPictureStatusChanged: this._onPictureInPictureStatusChanged,
@@ -462,6 +469,7 @@ Video.propTypes = {
   onPlaybackStalled: PropTypes.func,
   onPlaybackResume: PropTypes.func,
   onPlaybackRateChange: PropTypes.func,
+  onApplicationDidBecomeActive: PropTypes.func,
   onAudioFocusChanged: PropTypes.func,
   onAudioBecomingNoisy: PropTypes.func,
   onPictureInPictureStatusChanged: PropTypes.func,

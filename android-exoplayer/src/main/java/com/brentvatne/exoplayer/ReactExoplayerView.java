@@ -916,8 +916,7 @@ class ReactExoplayerView extends FrameLayout implements
         }
         Throwable cause = e.getSourceException();
         while (cause != null) {
-            if (cause instanceof BehindLiveWindowException ||
-                    cause instanceof HttpDataSource.HttpDataSourceException) {
+            if (cause instanceof BehindLiveWindowException) {
                 return true;
             }
             cause = cause.getCause();

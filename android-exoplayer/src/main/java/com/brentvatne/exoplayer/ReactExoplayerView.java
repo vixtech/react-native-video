@@ -235,19 +235,33 @@ class ReactExoplayerView extends FrameLayout implements
 
     @Override
     public void onHostResume() {
+        Log.d(TAG, String.format("host resume, playInBackground=%s", playInBackground));
+
+        boolean shouldPlay = false;
+
         if (!playInBackground || !isInBackground) {
+            shouldPlay = true;
+        }
+
+        isInBackground = false;
+
+        if (shouldPlay) {
             setPlayWhenReady(!isPaused);
         }
-        isInBackground = false;
     }
 
     @Override
     public void onHostPause() {
+        Log.d(TAG, String.format("host pause, playInBackground=%s", playInBackground));
         isInBackground = true;
         if (playInBackground) {
             return;
         }
         setPlayWhenReady(false);
+    }
+
+    public boolean isForcedPause() {
+        return isInBackground && !playInBackground;
     }
 
     @Override
@@ -539,7 +553,14 @@ class ReactExoplayerView extends FrameLayout implements
         }
 
         if (playWhenReady) {
+            if (isForcedPause()) {
+                Log.d(TAG, "forced pause active");
+                player.setPlayWhenReady(false);
+                return;
+            }
+
             boolean hasAudioFocus = requestAudioFocus();
+
             if (hasAudioFocus) {
                 player.setPlayWhenReady(true);
             }

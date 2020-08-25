@@ -5,12 +5,15 @@ import android.content.Context;
 import androidx.core.content.ContextCompat;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+
+import android.view.accessibility.CaptioningManager;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
@@ -24,11 +27,19 @@ import com.google.android.exoplayer2.text.TextRenderer;
 import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.ui.SubtitleView;
+import com.google.android.exoplayer2.util.Util;
 
 import java.util.List;
 
 @TargetApi(16)
 public final class ExoPlayerView extends FrameLayout {
+
+    /**
+     * The default fractional text size.
+     *
+     * @see #setFractionalTextSize(float, boolean)
+     */
+    public static final float DEFAULT_TEXT_SIZE_FRACTION = 0.0533f;
 
     private View surfaceView;
     private final View shutterView;
@@ -38,6 +49,7 @@ public final class ExoPlayerView extends FrameLayout {
     private SimpleExoPlayer player;
     private Context context;
     private ViewGroup.LayoutParams layoutParams;
+    private float textTrackSizeScale;
 
     private boolean useTextureView = true;
     private boolean hideShutterView = false;
@@ -76,6 +88,7 @@ public final class ExoPlayerView extends FrameLayout {
         subtitleLayout.setLayoutParams(layoutParams);
         subtitleLayout.setUserDefaultStyle();
         subtitleLayout.setUserDefaultTextSize();
+        configureSubtitleFontSize();
 
         updateSurfaceView();
 
@@ -83,6 +96,33 @@ public final class ExoPlayerView extends FrameLayout {
         layout.addView(subtitleLayout, 2, layoutParams);
 
         addViewInLayout(layout, 0, aspectRatioParams);
+    }
+
+    public void setTextTrackSizeScale(float textTrackSizeScale) {
+        this.textTrackSizeScale = textTrackSizeScale;
+
+        configureSubtitleFontSize();
+    }
+
+    public void configureSubtitleFontSize() {
+        if (subtitleLayout == null) {
+            return;
+        }
+
+        if (textTrackSizeScale <= 0) {
+            return;
+        }
+
+        float userFontScale = Util.SDK_INT >= 19 && !subtitleLayout.isInEditMode() ? getUserCaptionFontScaleV19() : 1f;
+
+        subtitleLayout.setFractionalTextSize(DEFAULT_TEXT_SIZE_FRACTION * userFontScale * textTrackSizeScale);
+    }
+
+    @TargetApi(19)
+    private float getUserCaptionFontScaleV19() {
+        CaptioningManager captioningManager =
+                (CaptioningManager) getContext().getSystemService(Context.CAPTIONING_SERVICE);
+        return captioningManager.getFontScale();
     }
 
     private void setVideoView() {

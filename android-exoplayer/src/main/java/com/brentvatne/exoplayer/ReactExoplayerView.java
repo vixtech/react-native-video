@@ -135,6 +135,7 @@ class ReactExoplayerView extends FrameLayout implements
     private String textTrackType;
     private Dynamic textTrackValue;
     private ReadableArray textTracks;
+    private float textTrackSizeScale;
     private boolean disableFocus;
     private boolean preventsDisplaySleepDuringVideoPlayback = true;
     private float mProgressUpdateInterval = 250.0f;
@@ -212,6 +213,7 @@ class ReactExoplayerView extends FrameLayout implements
                 LayoutParams.MATCH_PARENT);
         exoPlayerView = new ExoPlayerView(getContext());
         exoPlayerView.setLayoutParams(layoutParams);
+        exoPlayerView.setTextTrackSizeScale(textTrackSizeScale);
 
         addView(exoPlayerView, 0, layoutParams);
     }
@@ -1006,6 +1008,14 @@ class ReactExoplayerView extends FrameLayout implements
     public void setTextTracks(ReadableArray textTracks) {
         this.textTracks = textTracks;
         reloadSource();
+    }
+
+    public void setTextTrackSizeScale(float textTrackSizeScale) {
+        this.textTrackSizeScale = textTrackSizeScale;
+
+        if (this.exoPlayerView != null) {
+            this.exoPlayerView.setTextTrackSizeScale(textTrackSizeScale);
+        }
     }
 
     private void reloadSource() {

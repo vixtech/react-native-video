@@ -5,6 +5,7 @@
 #import <React/UIView+React.h>
 #include <MediaAccessibility/MediaAccessibility.h>
 #include <AVFoundation/AVFoundation.h>
+#include <CoreMedia/CoreMedia.h>
 
 static NSString *const statusKeyPath = @"status";
 static NSString *const playbackLikelyToKeepUpKeyPath = @"playbackLikelyToKeepUp";
@@ -62,6 +63,7 @@ static int const RCTVideoUnset = -1;
   NSArray * _textTracks;
   NSDictionary * _selectedTextTrack;
   NSDictionary * _selectedAudioTrack;
+  float _textTrackSizeScale;
   BOOL _playbackStalled;
   BOOL _playInBackground;
   BOOL _preventsDisplaySleepDuringVideoPlayback;
@@ -375,6 +377,15 @@ static int const RCTVideoUnset = -1;
       [self addPlayerItemObservers];
       [self setFilter:_filterName];
       [self setMaxBitRate:_maxBitRate];
+      
+      if (_textTrackSizeScale > 0.1f) {
+        int relativeFontSize = (int) (_textTrackSizeScale * 100);
+        AVTextStyleRule *rule = [[AVTextStyleRule alloc]initWithTextMarkupAttributes:@{
+          (id)kCMTextMarkupAttribute_RelativeFontSize : @(relativeFontSize)
+        }];
+
+        playerItem.textStyleRules = @[rule];
+      }
       
       [_player pause];
         
@@ -1055,6 +1066,7 @@ static int const RCTVideoUnset = -1;
   [self setPaused:_paused];
   [self setControls:_controls];
   [self setAllowsExternalPlayback:_allowsExternalPlayback];
+  [self setTextTrackSizeScale:_textTrackSizeScale];
 }
 
 - (void)setRepeat:(BOOL)repeat {
@@ -1120,6 +1132,10 @@ static int const RCTVideoUnset = -1;
     [self setMediaSelectionTrackForCharacteristic:AVMediaCharacteristicLegible
                                      withCriteria:_selectedTextTrack];
   }
+}
+
+- (void)setTextTrackSizeScale:(float)textTrackSizeScale {
+  _textTrackSizeScale = textTrackSizeScale;
 }
 
 - (void) setSideloadedText {

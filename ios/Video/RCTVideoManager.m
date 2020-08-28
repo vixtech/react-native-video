@@ -25,6 +25,7 @@ RCT_EXPORT_VIEW_PROPERTY(repeat, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(automaticallyWaitsToMinimizeStalling, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(allowsExternalPlayback, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(textTracks, NSArray);
+RCT_EXPORT_VIEW_PROPERTY(textTrackSizeScale, float);
 RCT_EXPORT_VIEW_PROPERTY(selectedTextTrack, NSDictionary);
 RCT_EXPORT_VIEW_PROPERTY(selectedAudioTrack, NSDictionary);
 RCT_EXPORT_VIEW_PROPERTY(paused, BOOL);

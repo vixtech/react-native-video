@@ -14,6 +14,7 @@ import android.view.Window;
 import android.view.accessibility.CaptioningManager;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.annotation.TargetApi;
 
 import com.brentvatne.react.R;
 import com.brentvatne.receiver.AudioBecomingNoisyReceiver;
@@ -73,6 +74,7 @@ import java.util.Locale;
 import java.util.Map;
 
 @SuppressLint("ViewConstructor")
+@TargetApi(22)
 class ReactExoplayerView extends FrameLayout implements
         LifecycleEventListener,
         Player.EventListener,
@@ -188,7 +190,6 @@ class ReactExoplayerView extends FrameLayout implements
         createViews();
 
         audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        themedReactContext.addLifecycleEventListener(this);
         audioBecomingNoisyReceiver = new AudioBecomingNoisyReceiver(themedReactContext);
 
         initializePlayer();
@@ -253,13 +254,21 @@ class ReactExoplayerView extends FrameLayout implements
     }
 
     @Override
+    @TargetApi(22)
     public void onHostPause() {
         Log.d(TAG, String.format("host pause, playInBackground=%s", playInBackground));
-        isInBackground = true;
-        if (playInBackground) {
-            return;
+        Activity activity = themedReactContext.getCurrentActivity();
+
+        if (!activity.requestVisibleBehind(true)) {
+            Log.d(TAG, "Request Visible Behind fail");
+            isInBackground = true;
+            if (playInBackground) {
+                return;
+            }
+            setPlayWhenReady(false);
+        } else {
+            Log.d(TAG, "Request Visible Behind success");
         }
-        setPlayWhenReady(false);
     }
 
     public boolean isForcedPause() {
@@ -391,6 +400,9 @@ class ReactExoplayerView extends FrameLayout implements
 
     private void initializePlayer() {
         ReactExoplayerView self = this;
+        Log.d(TAG, "addLifecycleEventListener");
+        themedReactContext.addLifecycleEventListener(this);
+
         // This ensures all props have been settled, to avoid async racing conditions.
         new Handler().postDelayed(new Runnable() {
             @Override
@@ -529,6 +541,7 @@ class ReactExoplayerView extends FrameLayout implements
             trackSelector = null;
             player = null;
         }
+        Log.d(TAG, "removeLifecycleEventListener");
         progressHandler.removeMessages(SHOW_PROGRESS);
         themedReactContext.removeLifecycleEventListener(this);
         audioBecomingNoisyReceiver.removeListener();
@@ -536,6 +549,7 @@ class ReactExoplayerView extends FrameLayout implements
     }
 
     private boolean requestAudioFocus() {
+        Log.d(TAG, "requestAudioFocus");
         if (disableFocus || srcUri == null) {
             return true;
         }
@@ -546,6 +560,7 @@ class ReactExoplayerView extends FrameLayout implements
     }
 
     private void abandonAudioFocus() {
+        Log.d(TAG, "abandonAudioFocus");
         audioManager.abandonAudioFocus(this);
     }
 
@@ -644,6 +659,8 @@ class ReactExoplayerView extends FrameLayout implements
 
     @Override
     public void onAudioFocusChange(int focusChange) {
+        Log.d(TAG, String.format("onAudioFocusChange, focusChange=%s", focusChange));
+
         switch (focusChange) {
             case AudioManager.AUDIOFOCUS_LOSS:
                 eventEmitter.audioFocusChanged(false);

@@ -263,7 +263,6 @@ class ReactExoplayerView extends FrameLayout implements
     @Override
     public void onHostPause() {
         Log.d(TAG, String.format("host pause, playInBackground=%s", playInBackground));
-        Activity activity = themedReactContext.getCurrentActivity();
 
         isInBackground = true;
         if (playInBackground) {
@@ -559,6 +558,7 @@ class ReactExoplayerView extends FrameLayout implements
         if (mediaSession != null) {
             Log.d(TAG, "mediaSession release");
             mediaSession.release();
+            mediaSession = null;
         }
     }
 
@@ -756,7 +756,6 @@ class ReactExoplayerView extends FrameLayout implements
                  * external play/pause state change.
                  */
                 if (playWhenReady == isPaused) {
-                    Log.d(TAG, "emit externalPauseToggled");
                     eventEmitter.externalPauseToggled(playWhenReady);
                 }
                 break;

@@ -152,6 +152,7 @@ class ReactExoplayerView extends FrameLayout implements
     private Map<String, String> requestHeaders;
     private boolean mReportBandwidth = false;
     private boolean controls;
+    private boolean hasAudioFocus = false;
     // \ End props
 
     // React
@@ -567,6 +568,9 @@ class ReactExoplayerView extends FrameLayout implements
         if (disableFocus || srcUri == null) {
             return true;
         }
+        if (hasAudioFocus) {
+            return true;
+        }
         int result = audioManager.requestAudioFocus(this,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN);
@@ -677,14 +681,17 @@ class ReactExoplayerView extends FrameLayout implements
 
         switch (focusChange) {
             case AudioManager.AUDIOFOCUS_LOSS:
+                hasAudioFocus = false;
                 eventEmitter.audioFocusChanged(false);
                 pausePlayback();
                 audioManager.abandonAudioFocus(this);
                 break;
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                hasAudioFocus = false;
                 eventEmitter.audioFocusChanged(false);
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
+                hasAudioFocus = true;
                 eventEmitter.audioFocusChanged(true);
                 break;
             default:
@@ -1060,7 +1067,6 @@ class ReactExoplayerView extends FrameLayout implements
 
     private void reloadSource() {
         playerNeedsSource = true;
-        abandonAudioFocus();
         initializePlayer();
     }
 

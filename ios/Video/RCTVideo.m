@@ -5,6 +5,7 @@
 #import <React/UIView+React.h>
 #include <MediaAccessibility/MediaAccessibility.h>
 #include <AVFoundation/AVFoundation.h>
+#include <CoreMedia/CoreMedia.h>
 
 static NSString *const statusKeyPath = @"status";
 static NSString *const playbackLikelyToKeepUpKeyPath = @"playbackLikelyToKeepUp";
@@ -58,6 +59,7 @@ static int const RCTVideoUnset = -1;
   float _rate;
   float _maxBitRate;
 
+  BOOL _automaticallyWaitsToMinimizeStalling;
   BOOL _muted;
   BOOL _paused;
   BOOL _repeat;
@@ -65,11 +67,15 @@ static int const RCTVideoUnset = -1;
   NSArray * _textTracks;
   NSDictionary * _selectedTextTrack;
   NSDictionary * _selectedAudioTrack;
+  float _textTrackSizeScale;
   BOOL _playbackStalled;
   BOOL _playInBackground;
+  BOOL _preventsDisplaySleepDuringVideoPlayback;
+  float _preferredForwardBufferDuration;
   BOOL _playWhenInactive;
   BOOL _pictureInPicture;
   NSString * _ignoreSilentSwitch;
+  NSString * _mixWithOthers;
   NSString * _resizeMode;
   BOOL _fullscreen;
   BOOL _fullscreenAutorotate;
@@ -91,7 +97,7 @@ static int const RCTVideoUnset = -1;
 {
   if ((self = [super init])) {
     _eventDispatcher = eventDispatcher;
-    
+	  _automaticallyWaitsToMinimizeStalling = YES;
     _playbackRateObserverRegistered = NO;
     _isExternalPlaybackActiveObserverRegistered = NO;
     _playbackStalled = NO;
@@ -107,10 +113,13 @@ static int const RCTVideoUnset = -1;
     _controls = NO;
     _playerBufferEmpty = YES;
     _playInBackground = false;
+    _preventsDisplaySleepDuringVideoPlayback = true;
+    _preferredForwardBufferDuration = 0.0f;
     _allowsExternalPlayback = YES;
     _playWhenInactive = false;
     _pictureInPicture = false;
     _ignoreSilentSwitch = @"inherit"; // inherit, ignore, obey
+    _mixWithOthers = @"inherit"; // inherit, mix, duck
 #if TARGET_OS_IOS
     _restoreUserInterfaceForPIPStopCompletionHandler = NULL;
 #endif
@@ -120,6 +129,10 @@ static int const RCTVideoUnset = -1;
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(applicationWillResignActive:)
                                                  name:UIApplicationWillResignActiveNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationDidBecomeActive:)
+                                                 name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
     
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -222,11 +235,19 @@ static int const RCTVideoUnset = -1;
   [_player setRate:0.0];
 }
 
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+  if(self.onApplicationDidBecomeActive) {
+    self.onApplicationDidBecomeActive(@{@"playbackRate": [NSNumber numberWithFloat:_player.rate]});
+  }
+}
+
 - (void)applicationDidEnterBackground:(NSNotification *)notification
 {
   if (_playInBackground) {
     // Needed to play sound in background. See https://developer.apple.com/library/ios/qa/qa1668/_index.html
     [_playerLayer setPlayer:nil];
+    [_playerViewController setPlayer:nil];
   }
 }
 
@@ -235,6 +256,7 @@ static int const RCTVideoUnset = -1;
   [self applyModifiers];
   if (_playInBackground) {
     [_playerLayer setPlayer:_player];
+    [_playerViewController setPlayer:_player];
   }
 }
 
@@ -264,6 +286,7 @@ static int const RCTVideoUnset = -1;
   }
   
   CMTime currentTime = _player.currentTime;
+  NSDate *currentPlaybackTime = _player.currentItem.currentDate;
   const Float64 duration = CMTimeGetSeconds(playerDuration);
   const Float64 currentTimeSecs = CMTimeGetSeconds(currentTime);
   
@@ -275,6 +298,7 @@ static int const RCTVideoUnset = -1;
                            @"playableDuration": [self calculatePlayableDuration],
                            @"atValue": [NSNumber numberWithLongLong:currentTime.value],
                            @"atTimescale": [NSNumber numberWithInt:currentTime.timescale],
+                           @"currentPlaybackTime": [NSNumber numberWithLongLong:[@(floor([currentPlaybackTime timeIntervalSince1970] * 1000)) longLongValue]],
                            @"target": self.reactTag,
                            @"seekableDuration": [self calculateSeekableDuration],
                            });
@@ -353,13 +377,21 @@ static int const RCTVideoUnset = -1;
     // perform on next run loop, otherwise other passed react-props may not be set
     [self playerItemForSource:source withCallback:^(AVPlayerItem * playerItem) {
       _playerItem = playerItem;
+      [self setPreferredForwardBufferDuration:_preferredForwardBufferDuration];
       [self addPlayerItemObservers];
       [self setFilter:_filterName];
       [self setMaxBitRate:_maxBitRate];
       
+      if (_textTrackSizeScale > 0.1f) {
+        int relativeFontSize = (int) (_textTrackSizeScale * 100);
+        AVTextStyleRule *rule = [[AVTextStyleRule alloc]initWithTextMarkupAttributes:@{
+          (id)kCMTextMarkupAttribute_RelativeFontSize : @(relativeFontSize)
+        }];
+
+        playerItem.textStyleRules = @[rule];
+      }
+      
       [_player pause];
-      [_playerViewController.view removeFromSuperview];
-      _playerViewController = nil;
         
       if (_playbackRateObserverRegistered) {
         [_player removeObserver:self forKeyPath:playbackRate context:nil];
@@ -382,6 +414,10 @@ static int const RCTVideoUnset = -1;
       [self addPlayerTimeObserver];
         
       _drm = [source objectForKey:@"drm"];
+
+      if (@available(iOS 10.0, *)) {
+        [self setAutomaticallyWaitsToMinimizeStalling:_automaticallyWaitsToMinimizeStalling];
+      }
 
       //Perform on next run loop, otherwise onVideoLoadStart is nil
       if (self.onVideoLoadStart) {
@@ -495,13 +531,10 @@ static int const RCTVideoUnset = -1;
   NSMutableDictionary *assetOptions = [[NSMutableDictionary alloc] init];
   
   if (isNetwork) {
-    /* Per #1091, this is not a public API.
-     * We need to either get approval from Apple to use this  or use a different approach.
-     NSDictionary *headers = [source objectForKey:@"requestHeaders"];
-     if ([headers count] > 0) {
-       [assetOptions setObject:headers forKey:@"AVURLAssetHTTPHeaderFieldsKey"];
-     }
-     */
+    NSDictionary *headers = [source objectForKey:@"requestHeaders"];
+    if ([headers count] > 0) {
+      [assetOptions setObject:headers forKey:@"AVURLAssetHTTPHeaderFieldsKey"];
+    }
     NSArray *cookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies];
     [assetOptions setObject:cookies forKey:AVURLAssetHTTPCookiesKey];
 
@@ -586,27 +619,11 @@ static int const RCTVideoUnset = -1;
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
 {
-  // when controls==true, this is a hack to reset the rootview when rotation happens in fullscreen
-  if (object == _playerViewController.contentOverlayView) {
-    if ([keyPath isEqualToString:@"frame"]) {
-      
-      CGRect oldRect = [change[NSKeyValueChangeOldKey] CGRectValue];
-      CGRect newRect = [change[NSKeyValueChangeNewKey] CGRectValue];
-      
-      if (!CGRectEqualToRect(oldRect, newRect)) {
-        if (CGRectEqualToRect(newRect, [UIScreen mainScreen].bounds)) {
-          NSLog(@"in fullscreen");
-        } else NSLog(@"not fullscreen");
-        
-        [self.reactViewController.view setFrame:[UIScreen mainScreen].bounds];
-        [self.reactViewController.view setNeedsLayout];
-      }
-      
-      return;
-    } else
-      return [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+
+  if([keyPath isEqualToString:readyForDisplayKeyPath] && [change objectForKey:NSKeyValueChangeNewKey] && self.onReadyForDisplay) {
+    self.onReadyForDisplay(@{@"target": self.reactTag});
+    return;
   }
-  
   if (object == _playerItem) {
     // When timeMetadata is read the event onTimedMetadata is triggered
     if ([keyPath isEqualToString:timedMetadata]) {
@@ -658,6 +675,15 @@ static int const RCTVideoUnset = -1;
           } else {
             orientation = @"portrait";
           }
+        } else if (_playerItem.presentationSize.height) {
+          width = [NSNumber numberWithFloat:_playerItem.presentationSize.width];
+          height = [NSNumber numberWithFloat:_playerItem.presentationSize.height];
+          orientation = _playerItem.presentationSize.width > _playerItem.presentationSize.height ? @"landscape" : @"portrait";
+        }
+
+        if (_pendingSeek) {
+          [self setCurrentTime:_pendingSeekTime];
+          _pendingSeek = false;
         }
         
         if (self.onVideoLoad && _videoLoadStarted) {
@@ -701,12 +727,6 @@ static int const RCTVideoUnset = -1;
       _playerBufferEmpty = NO;
       self.onVideoBuffer(@{@"isBuffering": @(NO), @"target": self.reactTag});
     }
-  } else if (object == _playerLayer) {
-    if([keyPath isEqualToString:readyForDisplayKeyPath] && [change objectForKey:NSKeyValueChangeNewKey]) {
-      if([change objectForKey:NSKeyValueChangeNewKey] && self.onReadyForDisplay) {
-        self.onReadyForDisplay(@{@"target": self.reactTag});
-      }
-    }
   } else if (object == _player) {
     if([keyPath isEqualToString:playbackRate]) {
       if(self.onPlaybackRateChange) {
@@ -727,8 +747,24 @@ static int const RCTVideoUnset = -1;
                                           @"target": self.reactTag});
         }
     }
-  } else {
-    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+  } else if (object == _playerViewController.contentOverlayView) {
+      // when controls==true, this is a hack to reset the rootview when rotation happens in fullscreen
+      if ([keyPath isEqualToString:@"frame"]) {
+
+        CGRect oldRect = [change[NSKeyValueChangeOldKey] CGRectValue];
+        CGRect newRect = [change[NSKeyValueChangeNewKey] CGRectValue];
+
+        if (!CGRectEqualToRect(oldRect, newRect)) {
+          if (CGRectEqualToRect(newRect, [UIScreen mainScreen].bounds)) {
+            NSLog(@"in fullscreen");
+
+            [self.reactViewController.view setFrame:[UIScreen mainScreen].bounds];
+            [self.reactViewController.view setNeedsLayout];
+          } else NSLog(@"not fullscreen");
+        }
+
+        return;
+      }
   }
 }
 
@@ -832,6 +868,12 @@ static int const RCTVideoUnset = -1;
   _playInBackground = playInBackground;
 }
 
+- (void)setPreventsDisplaySleepDuringVideoPlayback:(BOOL)preventsDisplaySleepDuringVideoPlayback
+{
+    _preventsDisplaySleepDuringVideoPlayback = preventsDisplaySleepDuringVideoPlayback;
+    [self applyModifiers];
+}
+
 - (void)setAllowsExternalPlayback:(BOOL)allowsExternalPlayback
 {
     _allowsExternalPlayback = allowsExternalPlayback;
@@ -887,18 +929,48 @@ static int const RCTVideoUnset = -1;
   [self applyModifiers];
 }
 
+- (void)setMixWithOthers:(NSString *)mixWithOthers
+{
+  _mixWithOthers = mixWithOthers;
+  [self applyModifiers];
+}
+
 - (void)setPaused:(BOOL)paused
 {
   if (paused) {
     [_player pause];
     [_player setRate:0.0];
   } else {
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    AVAudioSessionCategory category = nil;
+    AVAudioSessionCategoryOptions options = nil;
+
     if([_ignoreSilentSwitch isEqualToString:@"ignore"]) {
-      [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
+      category = AVAudioSessionCategoryPlayback;
     } else if([_ignoreSilentSwitch isEqualToString:@"obey"]) {
-      [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryAmbient error:nil];
+      category = AVAudioSessionCategoryAmbient;
     }
-    [_player play];
+
+    if([_mixWithOthers isEqualToString:@"mix"]) {
+      options = AVAudioSessionCategoryOptionMixWithOthers;
+    } else if([_mixWithOthers isEqualToString:@"duck"]) {
+      options = AVAudioSessionCategoryOptionDuckOthers;
+    }
+
+    if (category != nil && options != nil) {
+      [session setCategory:category withOptions:options error:nil];
+    } else if (category != nil && options == nil) {
+      [session setCategory:category error:nil];
+    } else if (category == nil && options != nil) {
+      [session setCategory:session.category withOptions:options error:nil];
+    }
+
+    if (@available(iOS 10.0, *) && !_automaticallyWaitsToMinimizeStalling) {
+      [_player playImmediatelyAtRate:_rate];
+    } else {
+      [_player play];
+      [_player setRate:_rate];
+    }
     [_player setRate:_rate];
   }
   
@@ -956,7 +1028,6 @@ static int const RCTVideoUnset = -1;
     }
     
   } else {
-    // TODO: See if this makes sense and if so, actually implement it
     _pendingSeek = true;
     _pendingSeekTime = [seekTime floatValue];
   }
@@ -985,15 +1056,35 @@ static int const RCTVideoUnset = -1;
   _playerItem.preferredPeakBitRate = maxBitRate;
 }
 
+- (void)setPreferredForwardBufferDuration:(float) preferredForwardBufferDuration
+{
+  _preferredForwardBufferDuration = preferredForwardBufferDuration;
+  _playerItem.preferredForwardBufferDuration = preferredForwardBufferDuration;
+}
+
+- (void)setAutomaticallyWaitsToMinimizeStalling:(BOOL)waits
+{
+	_automaticallyWaitsToMinimizeStalling = waits;
+	_player.automaticallyWaitsToMinimizeStalling = waits;
+}
+
 
 - (void)applyModifiers
 {
   if (_muted) {
-    [_player setVolume:0];
+    if (!_controls) {
+      [_player setVolume:0];
+    }
     [_player setMuted:YES];
   } else {
     [_player setVolume:_volume];
     [_player setMuted:NO];
+  }
+
+  if (@available(iOS 12.0, *)) {
+      self->_player.preventsDisplaySleepDuringVideoPlayback = _preventsDisplaySleepDuringVideoPlayback;
+  } else {
+      // Fallback on earlier versions
   }
   
   [self setMaxBitRate:_maxBitRate];
@@ -1004,6 +1095,7 @@ static int const RCTVideoUnset = -1;
   [self setPaused:_paused];
   [self setControls:_controls];
   [self setAllowsExternalPlayback:_allowsExternalPlayback];
+  [self setTextTrackSizeScale:_textTrackSizeScale];
 }
 
 - (void)setRepeat:(BOOL)repeat {
@@ -1069,6 +1161,10 @@ static int const RCTVideoUnset = -1;
     [self setMediaSelectionTrackForCharacteristic:AVMediaCharacteristicLegible
                                      withCriteria:_selectedTextTrack];
   }
+}
+
+- (void)setTextTrackSizeScale:(float)textTrackSizeScale {
+  _textTrackSizeScale = textTrackSizeScale;
 }
 
 - (void) setSideloadedText {
@@ -1311,7 +1407,9 @@ static int const RCTVideoUnset = -1;
 {
   if( _player )
   {
-    _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
+    if (!_playerViewController) {
+      _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
+    }
     // to prevent video from being animated when resizeMode is 'cover'
     // resize mode must be set before subview is added
     [self setResizeMode:_resizeMode];
@@ -1321,6 +1419,8 @@ static int const RCTVideoUnset = -1;
       [viewController addChildViewController:_playerViewController];
       [self addSubview:_playerViewController.view];
     }
+      
+    [_playerViewController addObserver:self forKeyPath:readyForDisplayKeyPath options:NSKeyValueObservingOptionNew context:nil];
     
     [_playerViewController.contentOverlayView addObserver:self forKeyPath:@"frame" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:NULL];
   }
@@ -1393,6 +1493,11 @@ static int const RCTVideoUnset = -1;
 {
   if (_playerViewController == playerViewController && _fullscreenPlayerPresented && self.onVideoFullscreenPlayerWillDismiss)
   {
+    @try{
+      [_playerViewController.contentOverlayView removeObserver:self forKeyPath:@"frame"];
+      [_playerViewController removeObserver:self forKeyPath:readyForDisplayKeyPath];
+    }@catch(id anException){
+    }
     self.onVideoFullscreenPlayerWillDismiss(@{@"target": self.reactTag});
   }
 }
@@ -1516,7 +1621,10 @@ static int const RCTVideoUnset = -1;
   [self removePlayerLayer];
   
   [_playerViewController.contentOverlayView removeObserver:self forKeyPath:@"frame"];
+  [_playerViewController removeObserver:self forKeyPath:readyForDisplayKeyPath];
   [_playerViewController.view removeFromSuperview];
+  _playerViewController.rctDelegate = nil;
+  _playerViewController.player = nil;
   _playerViewController = nil;
   
   [self removePlayerTimeObserver];

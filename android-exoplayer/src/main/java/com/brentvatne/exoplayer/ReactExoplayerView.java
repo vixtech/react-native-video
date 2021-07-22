@@ -825,6 +825,8 @@ class ReactExoplayerView extends FrameLayout implements
                 if (playWhenReady == isPaused) {
                     eventEmitter.externalPauseToggled(playWhenReady);
                 }
+
+                eventEmitter.playbackRateChange(playWhenReady ? rate : 0.0f);
                 break;
             case Player.STATE_ENDED:
                 text += "ended";
